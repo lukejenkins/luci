@@ -1,0 +1,13 @@
+{
+	"admin/network/range": {
+		"title": "Range Test",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "range/test"
+		},
+		"depends": {
+			"acl": [ "luci-app-range" ]
+		}
+	}
+}
