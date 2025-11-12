@@ -5,7 +5,7 @@
 'require poll';
 
 // Version tracking for cache debugging
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.5';
 
 // RPC declarations for range test operations
 var callGetStationInfo = rpc.declare({
@@ -30,11 +30,19 @@ var callGetTestStatus = rpc.declare({
 	method: 'get_test_status'
 });
 
+var callTransferData = rpc.declare({
+	object: 'luci.range',
+	method: 'transfer_data',
+	params: ['size']
+});
+
 return view.extend({
+	transferInterval: null,
+
 	load: function() {
 		console.log('[v' + APP_VERSION + '] Loading Range Test page');
 		return Promise.all([
-			callGetStationInfo(null).then(function(result) {
+			callGetStationInfo('').then(function(result) {
 				console.log('[v' + APP_VERSION + '] Load: callGetStationInfo result:', result);
 				return result;
 			}).catch(function(err) {
@@ -177,6 +185,8 @@ return view.extend({
 			ui.hideModal();
 			if (result && result.success) {
 				ui.addNotification(null, E('p', _('Test started successfully')), 'info');
+				// Start data transfer loop
+				this.startTransferLoop();
 			} else {
 				ui.addNotification(null, E('p', _('Failed to start test: ') + (result.error || 'Unknown error')), 'error');
 			}
@@ -186,7 +196,38 @@ return view.extend({
 		});
 	},
 
+	startTransferLoop: function() {
+		// Clear any existing interval
+		if (this.transferInterval) {
+			clearInterval(this.transferInterval);
+		}
+
+		console.log('[v' + APP_VERSION + '] Starting transfer loop');
+
+		// Transfer 64KB chunks every 100ms (640 KB/s baseline)
+		this.transferInterval = setInterval(L.bind(function() {
+			console.log('[v' + APP_VERSION + '] Calling transfer_data...');
+			callTransferData(65536).then(function(result) {
+				console.log('[v' + APP_VERSION + '] Transfer result:', result);
+			}).catch(function(err) {
+				// Test might have stopped, ignore errors
+				console.log('[v' + APP_VERSION + '] Transfer error:', err);
+			});
+		}, this), 100);
+	},
+
+	stopTransferLoop: function() {
+		console.log('[v' + APP_VERSION + '] Stopping transfer loop');
+		if (this.transferInterval) {
+			clearInterval(this.transferInterval);
+			this.transferInterval = null;
+		}
+	},
+
 	stopTest: function() {
+		// Stop the transfer loop
+		this.stopTransferLoop();
+
 		return callStopTest().then(L.bind(function(result) {
 			if (result && result.success) {
 				ui.addNotification(null, E('p', _('Test stopped')), 'info');
@@ -198,7 +239,7 @@ return view.extend({
 
 	updateStats: function() {
 		return Promise.all([
-			callGetStationInfo(null),
+			callGetStationInfo(''),
 			callGetTestStatus()
 		]).then(L.bind(function(results) {
 			var stationInfo = results[0];
@@ -234,9 +275,9 @@ return view.extend({
 				var durationEl = document.getElementById('test-duration');
 
 				if (statusEl) statusEl.textContent = testStatus.status || 'Idle';
-				if (downloadEl) downloadEl.textContent = testStatus.download_speed ? this.formatSpeed(testStatus.download_speed) : '-';
-				if (uploadEl) uploadEl.textContent = testStatus.upload_speed ? this.formatSpeed(testStatus.upload_speed) : '-';
-				if (durationEl) durationEl.textContent = testStatus.duration ? testStatus.duration + ' s' : '-';
+				if (downloadEl) downloadEl.textContent = (testStatus.download_speed !== undefined && testStatus.download_speed !== null) ? this.formatSpeed(testStatus.download_speed) : '-';
+				if (uploadEl) uploadEl.textContent = (testStatus.upload_speed !== undefined && testStatus.upload_speed !== null) ? this.formatSpeed(testStatus.upload_speed) : '-';
+				if (durationEl) durationEl.textContent = testStatus.duration !== undefined ? testStatus.duration + ' s' : '-';
 			}
 		}, this)).catch(function(err) {
 			console.error('Error updating stats:', err);
@@ -259,7 +300,7 @@ return view.extend({
 	},
 
 	formatSpeed: function(bytesPerSec) {
-		if (!bytesPerSec) return '-';
+		if (bytesPerSec === undefined || bytesPerSec === null) return '-';
 		var mbits = (bytesPerSec * 8) / 1000000;
 		return mbits.toFixed(2) + ' Mbit/s';
 	},
